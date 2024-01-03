@@ -1,0 +1,184 @@
+function sysCall_init()
+        -- do some initialization here
+        RefPosition=sim.getObjectHandle("ReferencePos3")
+        EndEffector=sim.getObjectHandle("EndEffector3")
+        
+        Connector=sim.getObjectHandle("Connector3")
+        Proximity=sim.getObjectHandle("Proximity3")
+        
+        Goal = sim.getObjectHandle("GoalPos3")
+        Box = sim.getObjectHandle("Box")
+        via = sim.getObjectHandle("viaPos3")
+        sensorHandle = sim.getObjectHandle("Sensor2")
+        
+        position_pick = sim.getObjectPosition(Box,-1)
+        position_goal = sim.getObjectPosition(Goal,-1)
+        position_via = sim.getObjectPosition(via,-1)
+        
+        position_pick[2] = position_pick[2] - 0.1; --as length of the box is 0.2
+        
+        sim.setObjectPosition(RefPosition, -1, position_via)
+        
+        -------
+        
+        state_start = 0;
+        state_via2pick = 1;
+        state_pick = 2;
+        state_pick2via = 3;
+        state_via2goal = 4;
+        state_goal = 5;
+        state_goal2via = 6;
+        state_stop = 7;
+        
+        --t_f = 13;
+        state = state_start; --initializing the FSM
+        triggered = false;
+    end
+
+    function sysCall_actuation()
+        if triggered then
+        -- put your actuation code here
+            t= sim.getSimulationTime();
+        
+            position_pick = sim.getObjectPosition(Box,-1)
+            position_pick[2] = position_pick[2] - 0.1;
+            
+            state = singlePickandPlace()
+            sim.addLog(sim.verbosity_scriptinfos, state)
+        end
+    end
+
+    function sysCall_sensing()
+        -- put your sensing code hereproximitySensor = sim.getObjectHandle("Proximity_sensor")
+        local res = sim.readProximitySensor(sensorHandle)
+        if res == 1 and not triggered then
+            triggered = true
+            t_f = sim.getSimulationTime()
+        end
+    end
+
+    function sysCall_cleanup()
+        -- do some clean-up here
+        
+    end
+
+    function singlePickandPlace()
+    --- transitions (arrows) ---
+    duration = 2;
+
+    if (state==state_start and t>=t_f) then --set transition and initialize the state
+        state = state_via2pick
+       position_i = position_via;
+        position_f = position_pick;
+        t_i = t_f;
+        t_f = t_i+duration;
+    elseif (state==state_via2pick and t>=t_f) then --set transition and initialize the state
+        state = state_pick
+    elseif (state==state_pick and t>=t_f) then --set transition and initialize the state
+        state = state_pick2via
+       position_i = position_pick;
+      position_f = position_via;
+        t_i = t_f;
+        t_f = t_i+duration;
+    elseif (state==state_pick2via and t>=t_f) then --set transition and initialize the state
+        state = state_via2goal
+      position_i = position_via;
+      position_f = position_goal;
+        t_i = t_f;
+        t_f = t_i+duration;
+    elseif (state==state_via2goal and t>=t_f) then --set transition and initialize the state
+        state = state_release
+    elseif (state==state_release and t>=t_f) then   
+        state = state_goal2via
+        position_i = position_goal;
+        position_f = position_via;
+        t_i = t_f;
+        t_f = t_i+duration;
+    elseif (state==state_goal2via and t>=t_f) then --set transition and initialize the state
+        state = state_stop
+    end
+
+
+
+    -- actions (circles) ---
+    if (state==state_via2pick) 
+      or (state == state_pick2via) 
+      or (state == state_via2goal) 
+      or (state == state_goal2via) then
+        moveIK(position_i,position_f,t_i,t_f)
+    end
+
+    if (state==state_pick) then
+        shapeAttached = graspObject()
+    end
+
+    if (state==state_release) then
+        releaseObject(shapeAttached)
+    end
+
+    return state
+
+    end
+
+
+
+    function moveIK(position_i,position_f,t_i,t_f)
+    x_i = position_i[1];
+    y_i = position_i[2];
+    z_i = position_i[3];
+
+    x_f = position_f[1];
+    y_f = position_f[2];
+    z_f = position_f[3];
+
+    dt = t_f - t_i;
+    dx = x_f - x_i
+    vx = dx/dt;
+    dy = y_f - y_i
+    vy = dy/dt;
+    dz = z_f - z_i
+    vz = dz/dt;
+
+    x = x_i + vx*(t-t_i)
+    y = y_i + vy*(t-t_i)
+    z = z_i + vz*(t-t_i)
+
+    position_ref = {x,y,z}
+    sim.setObjectPosition(RefPosition, -1, position_ref)
+
+
+    end
+
+
+    -- See the user manual or the available code snippets for additional callback functions and details
+    function releaseObject(shapeAttached)
+        if shapeAttached and shapeAttached ~= -1 then
+           sim.setObjectParent(shapeAttached, -1, true)
+       else
+           sim.addLog(sim.verbosity_scripterrors, "Invalid handle for shapeAttached.")
+       end
+    end
+
+function graspObject()
+   while true do
+    Box = sim.getObjectHandle("Box")
+    if (Box == -1) then -- -1 is ground
+        break
+    end
+    
+    result1,parameter1 = sim.getObjectInt32Parameter(Box,sim.shapeintparam_respondable);
+    -- if respondable then it return parameter1 = 1
+    result2,parameter2 = sim.getObjectInt32Parameter(Box,sim.shapeintparam_static);
+    -- if Box is static then it will return parameters2 = 1
+    -- here the box is dynamic so it will return parameter2 = 0
+    result3,distance = sim.checkProximitySensor(Proximity,Box)
+    --result3 = 1 if the Box is detected
+    if (result3==1) then
+    attachedShape = Box
+    sim.setObjectParent(attachedShape,Connector,true)
+    --	sim.setObjectParent(number objectHandle,number parentObjectHandle,boolean keepInPlace)
+    break
+    end
+    end
+    return attachedShape
+end
